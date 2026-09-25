@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Air Hockey Arena</title>
+<style>
+:root{
+  --bg:#0b0c10;--panel:#14161d;--text:#f3f4f8;--sub:#9aa0b4;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--bg:#e7e9f2;--panel:#ffffff;--text:#14151a;--sub:#5a5f75;}
+}
+:root[data-theme="dark"]{--bg:#0b0c10;--panel:#14161d;--text:#f3f4f8;--sub:#9aa0b4;}
+*{box-sizing:border-box;}
+html,body{height:100%;margin:0;}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  display:flex;flex-direction:column;align-items:center;gap:12px;
+  padding:calc(16px + env(safe-area-inset-top,0px)) 12px calc(16px + env(safe-area-inset-bottom,0px));
+  min-height:100%;overflow-x:hidden;
+}
+h1{font-size:20px;font-weight:700;margin:0;}
+.sub{color:var(--sub);font-size:13px;text-align:center;max-width:420px;}
+#hud{display:flex;align-items:center;gap:28px;font-size:15px;}
+.score{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;}
+.score.red{color:#e0262c;}
+.score.blue{color:#1c4fd6;}
+.label{font-size:11px;color:var(--sub);text-align:center;}
+#deuce{font-size:13px;font-weight:700;color:#f2b632;opacity:0;transition:opacity .2s;height:16px;width:70px;text-align:center;}
+#deuce.show{opacity:1;}
+#wrap{position:relative;width:min(94vw,1100px);border-radius:14px;}
+#wrap.shake{animation:shake .4s ease;}
+@keyframes shake{0%,100%{transform:translateX(0);}20%{transform:translateX(-7px);}40%{transform:translateX(7px);}60%{transform:translateX(-4px);}80%{transform:translateX(4px);}}
+canvas{width:100%;display:block;border-radius:14px;touch-action:none;box-shadow:0 18px 40px rgba(0,0,0,.35);}
+#deuceOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:6;opacity:0;background:radial-gradient(circle,rgba(242,182,50,.35),rgba(242,182,50,0) 68%);border-radius:14px;}
+#deuceOverlay.show{animation:deuceFade 1.9s ease forwards;}
+#deuceOverlay span{font-size:min(14vw,76px);font-weight:900;letter-spacing:3px;color:#ffd35c;text-shadow:0 0 24px rgba(255,211,92,.9),0 0 60px rgba(224,38,44,.55),0 0 90px rgba(28,79,214,.55);}
+#deuceOverlay.show span{animation:deuceScale 1.9s cubic-bezier(.2,1.4,.4,1) forwards;}
+@keyframes deuceFade{0%{opacity:0;}12%{opacity:1;}75%{opacity:1;}100%{opacity:0;}}
+@keyframes deuceScale{0%{transform:scale(.2) rotate(-6deg);}18%{transform:scale(1.25) rotate(2deg);}32%{transform:scale(1) rotate(0deg);}82%{transform:scale(1);}100%{transform:scale(1.35);opacity:0;}}
+#menu,#gameover{
+  position:absolute;inset:0;background:rgba(10,11,15,.88);border-radius:14px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;
+}
+#menu h2,#gameover h2{margin:0;font-size:20px;color:#fff;}
+.row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}
+button{border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;background:var(--panel);color:var(--text);}
+button.primary{background:#1c4fd6;color:#fff;border-color:#1c4fd6;}
+button.ghost{background:transparent;color:var(--sub);border-color:transparent;text-decoration:underline;}
+button:active{transform:scale(.97);}
+#diffRow{display:none;}
+footer{font-size:12px;color:var(--sub);margin-top:2px;text-align:center;}
+</style>
+</head>
+<body>
+<h1>Air Hockey Arena</h1>
+<div class="sub">Menang di gol ke-7 — kalau seri 6-6, harus unggul 2 gol dulu (deuce)</div>
+<div id="hud">
+  <div><div class="score red" id="scoreL">0</div><div class="label">RED</div></div>
+  <div id="deuce">DEUCE!</div>
+  <div><div class="score blue" id="scoreR">0</div><div class="label">BLUE</div></div>
+</div>
+<div id="wrap">
+  <canvas id="c" width="1100" height="650"></canvas>
+  <div id="deuceOverlay"><span>DEUCE!</span></div>
+  <div id="menu">
+    <h2>Pilih Mode</h2>
+    <div class="row">
+      <button class="primary" id="btn2p">2 Pemain</button>
+      <button id="btnBot">Lawan Bot</button>
+    </div>
+    <div class="row" id="diffRow">
+      <button data-d="easy">Mudah</button>
+      <button data-d="medium">Sedang</button>
+      <button data-d="hard">Sulit</button>
+    </div>
+    <div class="sub" id="menuHint">RED digerakkan sentuh/WASD di kiri, BLUE sentuh/Arrow di kanan</div>
+  </div>
+  <div id="gameover" style="display:none;">
+    <h2 id="goTitle"></h2>
+    <button class="primary" id="btnAgain">Main Lagi</button>
+    <button class="ghost" id="btnMenu">Ganti Mode</button>
+  </div>
+</div>
+<footer>Sentuh &amp; tahan mallet untuk menggerakkannya di sisi masing-masing.</footer>
+<script>
+(function(){
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height,TAU=Math.PI*2,pad=38;
+const scoreLEl=document.getElementById('scoreL'),scoreREl=document.getElementById('scoreR');
+const deuceEl=document.getElementById('deuce');
+const menu=document.getElementById('menu'),gameover=document.getElementById('gameover');
+const diffRow=document.getElementById('diffRow'),menuHint=document.getElementById('menuHint');
+
+const WIN=7,R_PUCK=18,R_MAL=31,GOAL_H=155,FRICTION=0.9935,MAXV=17;
+let mode=null,diff='medium',running=false,flash=0;
+let puck={x:W/2,y:H/2,vx:0,vy:0};
+let red={x:W*0.18,y:H/2,vx:0,vy:0,px:W*0.18,py:H/2};
+let blue={x:W*0.82,y:H/2,vx:0,vy:0,px:W*0.82,py:H/2};
+let scoreL=0,scoreR=0,keys={};
+
+const diffCfg={
+  easy:{speed:5.5,react:14,err:46,smooth:0.10},
+  medium:{speed:8,react:7,err:24,smooth:0.15},
+  hard:{speed:11.5,react:2,err:8,smooth:0.22}
+};
+let botTarget={x:blue.x,y:blue.y},botTimer=0,botVx=0,botVy=0;
+
+function resetPositions(dir){
+  puck.x=W/2;puck.y=H/2;
+  const a=Math.random()*0.6-0.3,s=6*(dir||(Math.random()<0.5?1:-1));
+  puck.vx=Math.cos(a)*s;puck.vy=Math.sin(a)*s*4;
+  red.x=W*0.18;red.y=H/2;red.px=red.x;red.py=red.y;
+  blue.x=W*0.82;blue.y=H/2;blue.px=blue.x;blue.py=blue.y;
+  botVx=0;botVy=0;botTarget.x=blue.x;botTarget.y=blue.y;
+}
+
+function drawRink(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#14151a';ctx.fillRect(0,0,W,H);
+  ctx.save();
+  ctx.beginPath();ctx.roundRect(pad,pad,W-pad*2,H-pad*2,18);ctx.clip();
+  ctx.fillStyle='#eef0fb';ctx.fillRect(pad,pad,W-pad*2,H-pad*2);
+  ctx.fillStyle='#c9cdf0';
+  for(let x=pad+20;x<W-pad;x+=28)for(let y=pad+20;y<H-pad;y+=28){ctx.beginPath();ctx.arc(x,y,1.6,0,TAU);ctx.fill();}
+  // out-of-bounds line
+  const ob=18;
+  ctx.setLineDash([10,8]);
+  ctx.strokeStyle='#9aa0c0';ctx.lineWidth=2.5;
+  ctx.strokeRect(pad+ob,pad+ob,W-pad*2-ob*2,H-pad*2-ob*2);
+  ctx.setLineDash([]);
+  ctx.strokeStyle='#e0262c';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(W/2,pad);ctx.lineTo(W/2,H-pad);ctx.stroke();
+  ctx.beginPath();ctx.arc(W/2,H/2,78,0,TAU);ctx.strokeStyle='#e0262c';ctx.lineWidth=2.5;ctx.stroke();
+  ctx.beginPath();ctx.arc(W/2,H/2,55,0,TAU);ctx.strokeStyle='#1c4fd6';ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.arc(pad,H/2,168,-1.15,1.15);ctx.strokeStyle='#e0262c';ctx.lineWidth=4;ctx.stroke();
+  ctx.beginPath();ctx.arc(W-pad,H/2,168,Math.PI-1.15,Math.PI+1.15);ctx.strokeStyle='#1c4fd6';ctx.lineWidth=4;ctx.stroke();
+  ctx.restore();
+  // goal boxes with net hatching
+  drawGoal(pad-25,H/2-GOAL_H/2,25,GOAL_H,'#e0262c',true);
+  drawGoal(W-pad,H/2-GOAL_H/2,25,GOAL_H,'#1c4fd6',false);
+  // bright goal line across each mouth
+  ctx.lineWidth=5;
+  ctx.strokeStyle='#ff3b41';
+  ctx.beginPath();ctx.moveTo(pad,H/2-GOAL_H/2);ctx.lineTo(pad,H/2+GOAL_H/2);ctx.stroke();
+  ctx.strokeStyle='#3f6bff';
+  ctx.beginPath();ctx.moveTo(W-pad,H/2-GOAL_H/2);ctx.lineTo(W-pad,H/2+GOAL_H/2);ctx.stroke();
+  if(flash>0){ctx.fillStyle=flash%10<5?'rgba(255,255,255,.5)':'rgba(255,255,255,.1)';ctx.fillRect(0,0,W,H);}
+}
+function drawGoal(x,y,w,h,color,net){
+  ctx.fillStyle='#0d0e12';ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle=color;ctx.lineWidth=3;ctx.strokeRect(x,y,w,h);
+  ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=1;
+  for(let i=1;i<4;i++){const gx=x+w*i/4;ctx.beginPath();ctx.moveTo(gx,y);ctx.lineTo(gx,y+h);ctx.stroke();}
+  for(let j=1;j<6;j++){const gy=y+h*j/6;ctx.beginPath();ctx.moveTo(x,gy);ctx.lineTo(x+w,gy);ctx.stroke();}
+}
+function drawMallet(m,c1,c2){
+  const g=ctx.createRadialGradient(m.x-8,m.y-8,4,m.x,m.y,R_MAL);
+  g.addColorStop(0,c1);g.addColorStop(1,c2);
+  ctx.beginPath();ctx.arc(m.x,m.y,R_MAL,0,TAU);ctx.fillStyle=g;ctx.fill();
+  ctx.lineWidth=3;ctx.strokeStyle='#0b0c10';ctx.stroke();
+  ctx.beginPath();ctx.arc(m.x,m.y,10,0,TAU);ctx.fillStyle='rgba(255,255,255,.35)';ctx.fill();
+}
+function drawPuck(){
+  ctx.beginPath();ctx.arc(puck.x,puck.y,R_PUCK,0,TAU);
+  ctx.fillStyle='#6b7280';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#1c1d22';ctx.stroke();
+}
+
+function collide(m){
+  const dx=puck.x-m.x,dy=puck.y-m.y,d=Math.hypot(dx,dy),min=R_PUCK+R_MAL;
+  if(d<min && d>0){
+    const nx=dx/d,ny=dy/d;
+    puck.x=m.x+nx*min;puck.y=m.y+ny*min;
+    const relv=(puck.vx-m.vx)*nx+(puck.vy-m.vy)*ny;
+    if(relv<0){const imp=-relv*1.9;puck.vx+=nx*imp+m.vx*0.6;puck.vy+=ny*imp+m.vy*0.6;}
+  }
+}
+function checkWin(){
+  const leader=Math.max(scoreL,scoreR),diffv=Math.abs(scoreL-scoreR);
+  if(leader>=WIN && diffv>=2)return scoreL>scoreR?'RED':'BLUE';
+  return null;
+}
+function updateDeuce(){
+  deuceEl.classList.toggle('show', scoreL>=WIN-1 && scoreR>=WIN-1 && Math.abs(scoreL-scoreR)<2);
+}
+function triggerDeuceBurst(){
+  const el=document.getElementById('deuceOverlay'),wrapEl=document.getElementById('wrap');
+  el.classList.remove('show');wrapEl.classList.remove('shake');
+  void el.offsetWidth;
+  el.classList.add('show');wrapEl.classList.add('shake');
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>el.classList.remove('show'),2000);
+}
+function goal(who){
+  flash=20;
+  if(who==='L')scoreL++; else scoreR++;
+  scoreLEl.textContent=scoreL;scoreREl.textContent=scoreR;
+  updateDeuce();
+  if(scoreL===scoreR && scoreL>=WIN-1) triggerDeuceBurst();
+  const winner=checkWin();
+  if(winner){running=false;document.getElementById('goTitle').textContent=winner+' MENANG!';gameover.style.display='flex';}
+  else resetPositions(who==='L'?1:-1);
+}
+function runBot(){
+  const cfg=diffCfg[diff];
+  botTimer++;
+  if(botTimer>=cfg.react){
+    botTimer=0;
+    let tx,ty;
+    if(puck.vx>0||puck.x>W*0.55){
+      let px=puck.x,py=puck.y,vx=puck.vx,vy=puck.vy;
+      for(let i=0;i<40;i++){px+=vx;py+=vy;if(py<pad+R_PUCK||py>H-pad-R_PUCK)vy*=-1;if(px>W*0.9)break;}
+      tx=Math.min(Math.max(px,W/2+R_MAL),W-pad-R_MAL);ty=py;
+    } else {tx=W*0.78;ty=H/2+Math.sin(Date.now()/900)*60;}
+    tx+=(Math.random()*2-1)*cfg.err;ty+=(Math.random()*2-1)*cfg.err;
+    botTarget.x=Math.max(W/2+R_MAL,Math.min(W-pad-R_MAL,tx));
+    botTarget.y=Math.max(pad+R_MAL,Math.min(H-pad-R_MAL,ty));
+  }
+  // ease toward target: slow down near arrival, accelerate/decelerate smoothly
+  const dx=botTarget.x-blue.x,dy=botTarget.y-blue.y,dist=Math.hypot(dx,dy);
+  const desiredSpeed=Math.min(cfg.speed,dist*0.18+0.6);
+  let desVx=0,desVy=0;
+  if(dist>0.4){desVx=dx/dist*desiredSpeed;desVy=dy/dist*desiredSpeed;}
+  botVx+=(desVx-botVx)*cfg.smooth;
+  botVy+=(desVy-botVy)*cfg.smooth;
+  blue.x+=botVx;blue.y+=botVy;
+  blue.x=Math.max(W/2+R_MAL,Math.min(W-pad-R_MAL,blue.x));
+  blue.y=Math.max(pad+R_MAL,Math.min(H-pad-R_MAL,blue.y));
+}
+function step(){
+  if(running){
+    const kv=10;
+    if(keys['w']||keys['W'])red.y-=kv; if(keys['s']||keys['S'])red.y+=kv;
+    if(keys['a']||keys['A'])red.x-=kv; if(keys['d']||keys['D'])red.x+=kv;
+    if(mode==='2p'){
+      if(keys['ArrowUp'])blue.y-=kv; if(keys['ArrowDown'])blue.y+=kv;
+      if(keys['ArrowLeft'])blue.x-=kv; if(keys['ArrowRight'])blue.x+=kv;
+    }
+    red.x=Math.max(pad+R_MAL,Math.min(W/2-R_MAL,red.x));
+    red.y=Math.max(pad+R_MAL,Math.min(H-pad-R_MAL,red.y));
+    if(mode==='2p'){
+      blue.x=Math.max(W/2+R_MAL,Math.min(W-pad-R_MAL,blue.x));
+      blue.y=Math.max(pad+R_MAL,Math.min(H-pad-R_MAL,blue.y));
+    } else runBot();
+    red.vx=red.x-red.px;red.vy=red.y-red.py;red.px=red.x;red.py=red.y;
+    blue.vx=blue.x-blue.px;blue.vy=blue.y-blue.py;blue.px=blue.x;blue.py=blue.y;
+
+    puck.x+=puck.vx;puck.y+=puck.vy;puck.vx*=FRICTION;puck.vy*=FRICTION;
+    const sp=Math.hypot(puck.vx,puck.vy);
+    if(sp>MAXV){puck.vx=puck.vx/sp*MAXV;puck.vy=puck.vy/sp*MAXV;}
+    if(puck.y<pad+R_PUCK){puck.y=pad+R_PUCK;puck.vy*=-1;}
+    if(puck.y>H-pad-R_PUCK){puck.y=H-pad-R_PUCK;puck.vy*=-1;}
+    const inGoalY=Math.abs(puck.y-H/2)<GOAL_H/2-R_PUCK;
+    if(puck.x<pad+R_PUCK){ if(inGoalY)goal('R'); else {puck.x=pad+R_PUCK;puck.vx*=-1;} }
+    if(puck.x>W-pad-R_PUCK){ if(inGoalY)goal('L'); else {puck.x=W-pad-R_PUCK;puck.vx*=-1;} }
+    collide(red);collide(blue);
+    if(flash>0)flash--;
+  }
+  drawRink();drawMallet(red,'#ff5257','#8f0f13');drawMallet(blue,'#4d7bff','#0d2a80');drawPuck();
+  requestAnimationFrame(step);
+}
+
+let touches={};
+function getPos(e){const r=cv.getBoundingClientRect(),scale=W/r.width;return{x:(e.clientX-r.left)*scale,y:(e.clientY-r.top)*scale};}
+cv.addEventListener('pointerdown',e=>{
+  const p=getPos(e),side=p.x<W/2?'red':'blue';
+  if(side==='blue'&&mode==='bot')return;
+  touches[e.pointerId]=side;cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove',e=>{
+  const side=touches[e.pointerId];if(!side)return;
+  const p=getPos(e);
+  if(side==='red'){red.x=Math.max(pad+R_MAL,Math.min(W/2-R_MAL,p.x));red.y=Math.max(pad+R_MAL,Math.min(H-pad-R_MAL,p.y));}
+  else if(mode==='2p'){blue.x=Math.max(W/2+R_MAL,Math.min(W-pad-R_MAL,p.x));blue.y=Math.max(pad+R_MAL,Math.min(H-pad-R_MAL,p.y));}
+});
+cv.addEventListener('pointerup',e=>{delete touches[e.pointerId];});
+cv.addEventListener('pointercancel',e=>{delete touches[e.pointerId];});
+window.addEventListener('keydown',e=>{keys[e.key]=true;});
+window.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+document.getElementById('btn2p').onclick=()=>{mode='2p';startGame();};
+document.getElementById('btnBot').onclick=()=>{diffRow.style.display='flex';menuHint.textContent='Pilih tingkat kesulitan bot';};
+diffRow.querySelectorAll('button').forEach(b=>b.onclick=()=>{diff=b.dataset.d;mode='bot';startGame();});
+document.getElementById('btnAgain').onclick=()=>{
+  scoreL=0;scoreR=0;scoreLEl.textContent=0;scoreREl.textContent=0;updateDeuce();
+  document.getElementById('deuceOverlay').classList.remove('show');
+  resetPositions();gameover.style.display='none';running=true;
+};
+document.getElementById('btnMenu').onclick=()=>{
+  gameover.style.display='none';menu.style.display='flex';diffRow.style.display='none';
+  menuHint.textContent='RED digerakkan sentuh/WASD di kiri, BLUE sentuh/Arrow di kanan';
+};
+function startGame(){
+  menu.style.display='none';
+  scoreL=0;scoreR=0;scoreLEl.textContent=0;scoreREl.textContent=0;updateDeuce();
+  document.getElementById('deuceOverlay').classList.remove('show');
+  resetPositions();running=true;
+}
+
+resetPositions();
+drawRink();drawMallet(red,'#ff5257','#8f0f13');drawMallet(blue,'#4d7bff','#0d2a80');drawPuck();
+requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>
